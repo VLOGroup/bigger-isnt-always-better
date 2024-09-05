@@ -12,7 +12,7 @@ Modified from Chung & Ye [1] ([Code](https://github.com/HJ-harry/score-MRI)) and
 Training scripts for MRI, CT and natural images are provided in ```training_scripts```.
 
 ## Evaluation
-Scripts in ``èvaluation```demonstrate how the reconstructions are calculated. ```hist.sh``` creates the image statistics shown in Fig. 1.
+Scripts in ```evaluation``` demonstrate how the reconstructions are calculated. ```hist.sh``` creates the image statistics shown in Fig. 1.
 
 ## Cite This Work
 Please consider citing this work using
