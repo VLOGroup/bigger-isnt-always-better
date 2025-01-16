@@ -2,6 +2,7 @@
 ![Concept](/concept/concept.jpg)
 
 Official Github Repository of "Bigger Isn’t Always Better: Towards a General Prior for Medical Image Reconstruction" from GCPR 2024.
+You can find a preprint of this work on [arXiv](https://arxiv.org/abs/2501.07376).
 > **Abstract:**
 >
 > Diffusion model have been successfully applied to many inverse problems, including MRI and CT reconstruction. Researchers typically re-purpose models originally designed for unconditional sampling without modifications. Using two different posterior sampling algorithms, we show empirically that such large networks are not necessary. Our smallest model, effectively a ResNet, performs almost as good as an attention U-Net on in-distribution reconstruction, while being significantly more robust towards distribution shifts. Furthermore, we introduce models trained on natural images and demonstrate that they can be used in both MRI and CT reconstruction, out-performing model trained on medical images in out-of-distribution cases. As a result of our findings, we strongly caution against simply re-using very large networks and encourage researchers to adapt the model complexity to the respective task. Moreover, we argue that a key step towards a general diffusion-based prior is training on natural images.
