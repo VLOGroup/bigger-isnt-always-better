@@ -1,0 +1,8 @@
+method: 'pc'
+num_scales: 250
+predictor: 'reverse_diffusion'
+corrector: 'langevin'
+n_steps_each: 1
+noise_removal: True
+probability_flow: False
+snr: 0.075

@@ -1,0 +1,8 @@
+dataset: 'fastmri_brain'
+root: '/mount/data/glaszner/datasets/fastMRI/brain'
+image_size: 320
+num_channels: 1
+is_multi: False
+is_complex: False
+uniform_dequantization: False
+data_centered: False

@@ -1,0 +1,35 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --gpus=1
+#SBATCH --partition=rtx8000
+#SBATCH --ntasks=1
+#SBATCH --nodelist=nvcluster-node4
+#SBATCH --mail-user=lukas.glaszner@tugraz.at
+#SBATCH --mail-type=END
+#SBATCH --mail-type=FAIL
+
+source activate diff_mri
+cd /home/lg/ijcv/ijcv
+
+for algo in dps ald pc
+do
+    for set in corpd corpdfs brain
+    do
+        for model in 1_small
+        do
+            srun python evaluation_main.py \
+                --model_config=configs/models/ncsnpp_fastmri_${model}.yaml \
+                --data_config=configs/datasets/fast_mri_${set}.yaml \
+                --evaluation_config=configs/evaluation/gaussian_1d_4.yaml \
+                --sample_config=configs/samplers/${algo}_sampler.yaml \
+                --savedir=/srv/local/lg/ijcv_update/fastmri_${model}_${set}_g1d4_${algo}
+
+            srun python evaluation_main.py \
+                --model_config=configs/models/ncsnpp_celeba_${model}.yaml \
+                --data_config=configs/datasets/fast_mri_${set}.yaml \
+                --evaluation_config=configs/evaluation/gaussian_1d_4.yaml \
+                --sample_config=configs/samplers/${algo}_sampler.yaml \
+                --savedir=/srv/local/lg/ijcv_update/celeba_${model}_${set}_g1d4_${algo}
+        done
+    done
+done

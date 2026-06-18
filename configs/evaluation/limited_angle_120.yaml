@@ -1,0 +1,9 @@
+measurement:
+  methodology: 'ct'
+  mask: 'lim_angle'
+  end_angle: 120
+  num_views: 120
+  img_size: 320
+  batch_size: 1
+
+num_samples: 15

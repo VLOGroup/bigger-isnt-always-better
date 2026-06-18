@@ -29,13 +29,13 @@ from .normalization import ConditionalInstanceNorm2dPlus
 def get_act(config):
   """Get activation functions from the config file."""
 
-  if config.model.nonlinearity.lower() == 'elu':
+  if config['model']['nonlinearity'].lower() == 'elu':
     return nn.ELU()
-  elif config.model.nonlinearity.lower() == 'relu':
+  elif config['model']['nonlinearity'].lower() == 'relu':
     return nn.ReLU()
-  elif config.model.nonlinearity.lower() == 'lrelu':
+  elif config['model']['nonlinearity'].lower() == 'lrelu':
     return nn.LeakyReLU(negative_slope=0.2)
-  elif config.model.nonlinearity.lower() == 'swish':
+  elif config['model']['nonlinearity'].lower() == 'swish':
     return nn.SiLU()
   else:
     raise NotImplementedError('activation function does not exist!')

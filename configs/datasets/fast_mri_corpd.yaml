@@ -1,0 +1,9 @@
+dataset: 'fastmri_knee'
+root: '/mount/data/glaszner/datasets/fastMRI/knee'
+image_size: 320
+num_channels: 1
+is_multi: False
+is_complex: False
+uniform_dequantization: False
+data_centered: False
+fat_suppression: False

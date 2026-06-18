@@ -21,7 +21,7 @@ from absl import flags
 from ml_collections.config_flags import config_flags
 import logging
 import os
-import tensorflow as tf
+from pathlib import Path
 
 FLAGS = flags.FLAGS
 
@@ -38,10 +38,10 @@ def main(argv):
   print(FLAGS.config)
   if FLAGS.mode == "train" or FLAGS.mode == "train_regression":
     # Create the working directory
-    tf.io.gfile.makedirs(FLAGS.workdir)
+    Path(FLAGS.workdir).mkdir(parents=True, exist_ok=True)
     # Set logger so that it outputs to both console and file
     # Make logging work for both disk and Google Cloud Storage
-    gfile_stream = open(os.path.join(FLAGS.workdir, 'stdout.txt'), 'w')
+    gfile_stream = open(Path(FLAGS.workdir) / 'stdout.txt', 'w')
     handler = logging.StreamHandler(gfile_stream)
     formatter = logging.Formatter('%(levelname)s - %(filename)s - %(asctime)s - %(message)s')
     handler.setFormatter(formatter)

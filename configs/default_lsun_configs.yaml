@@ -1,0 +1,10 @@
+optim:
+  weight_decay: 0
+  optimizer: 'Adam'
+  lr: 2.0e-4
+  beta1: 0.9
+  eps: 1.0e-8
+  warmup: 5000
+  grad_clip: 1.
+
+seed: 42

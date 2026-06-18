@@ -1,0 +1,6 @@
+method: 'diffpir'
+num_scales: 250
+n_steps_each: 1
+noise_removal: True
+probability_flow: False
+snr: 0.075

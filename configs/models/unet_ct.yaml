@@ -1,0 +1,4 @@
+model:
+  name: 'unet'
+
+path: '/mount/data/glaszner/ijcv_update/unet/ct_unet.ckpt'

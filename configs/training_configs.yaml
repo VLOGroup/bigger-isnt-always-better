@@ -1,0 +1,20 @@
+training:
+  batch_size: 1
+  epochs: 344
+  snapshot_freq: 50000
+  log_freq: 25
+  eval_freq: 100
+  snapshot_freq_for_preemption: 5000
+  snapshot_sampling: True
+  sample_frequency: 100
+
+optim:
+  weight_decay: 0
+  optimizer: 'Adam'
+  lr: 2.0e-4
+  beta1: 0.9
+  eps: 1.0e-8
+  warmup: 5000
+  grad_clip: 1.
+
+seed: 42

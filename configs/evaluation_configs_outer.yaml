@@ -1,0 +1,9 @@
+measurement:
+  methodology: 'mri'
+  mask: 'outer'
+  cutout: 160
+  img_size: 320
+  batch_size: 1
+
+num_samples: 3
+  

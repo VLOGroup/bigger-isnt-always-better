@@ -1,0 +1,10 @@
+measurement:
+  methodology: 'mri'
+  mask: 'gaussian1d'
+  acc_factor: 4
+  center_fraction: 0.04
+  img_size: 320
+  batch_size: 1
+
+num_samples: 100
+  

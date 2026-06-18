@@ -1,0 +1,8 @@
+method: 'ald'
+num_scales: 500
+predictor: 'reverse_diffusion'
+corrector: 'langevin'
+n_steps_each: 1
+noise_removal: True
+probability_flow: False
+snr: 0.075

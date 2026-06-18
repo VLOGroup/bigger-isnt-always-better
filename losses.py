@@ -21,19 +21,18 @@ import torch.optim as optim
 import numpy as np
 from models import utils as mutils
 from sde_lib import VESDE, VPSDE
-from utils import fft2, ifft2, get_mask
 import numpy as np
-import time
+
 
 
 def get_optimizer(config, params):
   """Returns a flax optimizer object based on `config`."""
-  if config.optim.optimizer == 'Adam':
-    optimizer = optim.Adam(params, lr=config.optim.lr, betas=(config.optim.beta1, 0.999), eps=config.optim.eps,
-                           weight_decay=config.optim.weight_decay)
+  if config['optim']['optimizer'] == 'Adam':
+    optimizer = optim.Adam(params, lr=config['optim']['lr'], betas=(config['optim']['beta1'], 0.999), eps=config['optim']['eps'],
+                           weight_decay=config['optim']['weight_decay'])
   else:
     raise NotImplementedError(
-      f'Optimizer {config.optim.optimizer} not supported yet!')
+      f'Optimizer {config["optim"]["optimizer"]} not supported yet!')
 
   return optimizer
 
@@ -41,9 +40,9 @@ def get_optimizer(config, params):
 def optimization_manager(config):
   """Returns an optimize_fn based on `config`."""
 
-  def optimize_fn(optimizer, params, step, lr=config.optim.lr,
-                  warmup=config.optim.warmup,
-                  grad_clip=config.optim.grad_clip):
+  def optimize_fn(optimizer, params, step, lr=config['optim']['lr'],
+                  warmup=config['optim']['warmup'],
+                  grad_clip=config['optim']['grad_clip']):
     """Optimizes with warmup and gradient clipping (disabled if negative)."""
     if warmup > 0:
       for g in optimizer.param_groups:
@@ -55,7 +54,7 @@ def optimization_manager(config):
   return optimize_fn
 
 
-def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_weighting=True, eps=1e-5):
+def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_weighting=True, eps=1e-5, depth_param=False):
   """Create a loss function for training with arbirary SDEs.
 
   Args:
@@ -73,7 +72,7 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
   """
   reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
 
-  def loss_fn(model, batch):
+  def loss_fn(model, batch, d=None):
     """Compute the loss function.
     Args:
       model: A score model.
@@ -82,18 +81,23 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
     Returns:
       loss: A scalar that represents the average loss value across the mini-batch.
     """
-    score_fn = mutils.get_score_fn(sde, model, train=train, continuous=continuous)
+    score_fn = mutils.get_score_fn(sde, model, train=train, continuous=continuous, depth_param=depth_param)
     t = torch.rand(batch.shape[0], device=batch.device) * (sde.T - eps) + eps
     z = torch.randn_like(batch)
     mean, std = sde.marginal_prob(batch, t)
     perturbed_data = mean + std[:, None, None, None] * z
-    score = score_fn(perturbed_data, t)
+    if depth_param:
+      if d is None:
+        d = (torch.randint(4, (1,)) + 1)[0].item()
+      score = score_fn(perturbed_data, t, d)
+    else:
+      score = score_fn(perturbed_data, t)
 
     if not likelihood_weighting:
       losses = torch.square(score * std[:, None, None, None] + z)
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
     else:
-      g2 = sde.sde(torch.zeros_like(batch), t)[1] ** 2
+      g2 = sde.sde(torch.zeros_like(batch), t, d)[1] ** 2
       losses = torch.square(score + z / std[:, None, None, None])
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2
 
@@ -150,7 +154,7 @@ def get_ddpm_loss_fn(vpsde, train, reduce_mean=True):
   return loss_fn
 
 
-def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True, likelihood_weighting=False):
+def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True, likelihood_weighting=False, depth_param=False): 
   """Create a one-step training/evaluation function.
 
   Args:
@@ -166,7 +170,7 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
   """
   if continuous:
     loss_fn = get_sde_loss_fn(sde, train, reduce_mean=reduce_mean,
-                              continuous=True, likelihood_weighting=likelihood_weighting)
+                              continuous=True, likelihood_weighting=likelihood_weighting, depth_param=depth_param)
   else:
     assert not likelihood_weighting, "Likelihood weighting is not supported for original SMLD/DDPM training."
     if isinstance(sde, VESDE):
@@ -176,7 +180,7 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
     else:
       raise ValueError(f"Discrete training for {sde.__class__.__name__} is not recommended.")
 
-  def step_fn(state, batch):
+  def step_fn(state, batch, d=None):
     """Running one step of training or evaluation.
 
     This function will undergo `jax.lax.scan` so that multiple steps can be pmapped and jit-compiled together
@@ -194,9 +198,23 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
     if train:
       optimizer = state['optimizer']
       optimizer.zero_grad()
-      loss = loss_fn(model, batch)
-      loss.backward()
-      optimize_fn(optimizer, model.parameters(), step=state['step'])
+      if d is None:
+        loss = loss_fn(model, batch)
+        loss.backward()
+        optimize_fn(optimizer, model.parameters(), step=state['step'])
+      else:
+        for p in model.all_modules.parameters():
+          p.requires_grad = False
+        for p in model.all_modules[d-1].parameters():
+          p.requires_grad = True
+        # model.all_modules.requires_grad_(False)
+        # model.all_modules[d-1].requires_grad_(True)
+        loss = loss_fn(model, batch, d)
+        loss.backward()
+        optimize_fn(optimizer, model.parameters(), step=state['step'])
+        # model.all_modules.requires_grad_(True)
+        for p in model.all_modules.parameters():
+          p.requires_grad = True
       state['step'] += 1
       state['ema'].update(model.parameters())
     else:
@@ -209,57 +227,4 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
 
     return loss
 
-  return step_fn
-
-
-
-def get_step_fn_regression(train, config, mask=None, loss_fn=None, optimize_fn=None):
-
-  def step_fn(state, batch):
-    model = state['model']
-    if train:
-      optimizer = state['optimizer']
-      optimizer.zero_grad()
-
-      # fft
-      kspace = fft2(batch)
-
-      # sample mask
-      acc_factor = np.random.choice(config.training.acc_factor)
-      mask = get_mask(batch, config.data.image_size, config.training.batch_size,
-                      type=config.training.mask_type,
-                      acc_factor=acc_factor,
-                      fix=True)
-
-      # undersampling
-      under_kspace = kspace * mask
-      under_img = torch.abs(ifft2(under_kspace))
-
-      est_img = model(under_img)
-      loss = loss_fn(est_img, batch)
-      loss.backward()
-      optimize_fn(optimizer, model.parameters(), step=state['step'])
-      state['step'] += 1
-      state['ema'].update(model.parameters())
-      return loss
-    else:
-      with torch.no_grad():
-        ema = state['ema']
-        ema.store(model.parameters())
-        ema.copy_to(model.parameters())
-        # fft
-        kspace = fft2(batch)
-
-        # sample mask
-        mask = get_mask(batch, config.data.image_size, config.traiing.batch_size,
-                        type=config.training.mask_type,
-                        acc_factor=config.training.acc_factor)
-
-        # undersampling
-        under_kspace = kspace * mask
-        under_img = torch.real(ifft2(under_kspace))
-
-        est_img = model(under_img)
-        ema.restore(model.parameters())
-        return est_img
   return step_fn

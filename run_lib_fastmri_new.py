@@ -23,11 +23,11 @@ import time
 import glob
 
 import numpy as np
-import tensorflow as tf
-import tensorflow_gan as tfgan
+# import tensorflow as tf
+# import tensorflow_gan as tfgan
 import logging
 # Keep the import below for registering all model definitions
-from models import ddpm, ncsnv2, ncsnpp #  , unet
+from models import ddpm, ncsnpp #  , unet
 import losses
 import sampling
 from models import utils as mutils
@@ -43,6 +43,8 @@ from torch import nn
 from torch.utils import tensorboard
 from torchvision.utils import make_grid, save_image
 from utils import save_checkpoint, restore_checkpoint, get_mask, kspace_to_nchw, root_sum_of_squares
+from pathlib import Path
+import utils
 
 FLAGS = flags.FLAGS
 
@@ -57,11 +59,11 @@ def train(config, workdir):
   """
 
   # Create directories for experimental logs
-  sample_dir = os.path.join(workdir, "samples")
-  tf.io.gfile.makedirs(sample_dir)
+  sample_dir = Path(workdir) / "samples"
+  sample_dir.mkdir(parents=True, exist_ok=True)
 
-  tb_dir = os.path.join(workdir, "tensorboard")
-  tf.io.gfile.makedirs(tb_dir)
+  tb_dir = Path(workdir) / "tensorboard"
+  tb_dir.mkdir(parents=True, exist_ok=True)
 
   # Initialize model.
   score_model = mutils.create_model(config)
@@ -72,15 +74,15 @@ def train(config, workdir):
   logging.info(f'Model Architecture:\n{score_model.all_modules}')
 
   # Create checkpoints directory
-  checkpoint_dir = os.path.join(workdir, "checkpoints")
+  checkpoint_dir = Path(workdir) / "checkpoints"
   # checkpoint_meta_dir = os.path.join(workdir, "checkpoints-meta", "checkpoint.pth")
   # tf.io.gfile.makedirs(os.path.dirname(checkpoint_meta_dir))
   # Resume training when intermediate checkpoints are detected
   # if os.path.exists(checkpoint_meta_dir):
   #   state = restore_checkpoint(checkpoint_meta_dir, state, config.device)
-  if os.path.exists(os.path.join(checkpoint_dir, 'checkpoint.pth')):
-    state = restore_checkpoint(max(glob.glob(os.path.join(checkpoint_dir, '*')), key=os.path.getctime), state, config.device)
-  tf.io.gfile.makedirs(checkpoint_dir)
+  if (checkpoint_dir / 'checkpoint.pth').exists():
+    state = restore_checkpoint(max(glob.glob(str(checkpoint_dir / '*')), key=os.path.getctime), state, config.device)
+  checkpoint_dir.mkdir(parents=True, exist_ok=True)
   initial_step = int(state['step'])
   writer = tensorboard.SummaryWriter(tb_dir, purge_step=initial_step)
 
@@ -93,15 +95,15 @@ def train(config, workdir):
     train_dl = mydata.create_ct_dataloader(config.data.image_size, batch_size=config.training.batch_size)
   num_data = len(train_dl.dataset)
   loss_over_iter = np.zeros(config.training.epochs * num_data)
-  if os.path.exists(os.path.join(workdir, 'loss.npy')):
-    loss_over_iter = np.load(os.path.join(workdir, 'loss.npy'))
+  if (Path(workdir) / 'loss.npy').exists():
+    loss_over_iter = np.load(Path(workdir) / 'loss.npy')
 
   # Get number of previously trained epochs
   initial_batch = initial_step // num_data
 
   # Create data normalizer and its inverse
-  scaler = datasets.get_data_scaler(config)
-  inverse_scaler = datasets.get_data_inverse_scaler(config)
+  scaler = utils.get_data_scaler(config)
+  inverse_scaler = utils.get_data_inverse_scaler(config)
 
   # Setup SDEs
   if config.training.sde.lower() == 'vpsde':
@@ -138,10 +140,10 @@ def train(config, workdir):
   logging.info(f'Starting training loop at step {initial_step} / batch {initial_batch}.')
   training_times_batch = np.zeros(config.training.epochs)
   training_times_epoch = np.zeros(config.training.epochs)
-  if os.path.exists(os.path.join(workdir, 'training_times_epoch.csv')):
-    training_times_epoch = np.loadtxt(os.path.join(workdir, 'training_times_epoch.csv'), dtype=float, delimiter=',')
-  if os.path.exists(os.path.join(workdir, 'training_times_batch.csv')):
-    training_times_batch = np.loadtxt(os.path.join(workdir, 'training_times_batch.csv'), dtype=float, delimiter=',')
+  if (Path(workdir) / 'training_times_epoch.csv').exists():
+    training_times_epoch = np.loadtxt(Path(workdir) / 'training_times_epoch.csv', dtype=float, delimiter=',')
+  if (Path(workdir) / 'training_times_batch.csv').exists():
+    training_times_batch = np.loadtxt(Path(workdir) / 'training_times_batch.csv', dtype=float, delimiter=',')
 
   for epoch in range(initial_batch, config.training.epochs):
     logging.info('=================================================')
@@ -173,14 +175,14 @@ def train(config, workdir):
       #   writer.add_scalar("eval_loss", scalar_value=eval_loss.item(), global_step=global_step)
 
     training_times_epoch[epoch] = time.time() - tic_epoch
-    np.savetxt(os.path.join(workdir, 'training_times_epoch.csv'), training_times_epoch, delimiter=',')
+    np.savetxt(Path(workdir) / 'training_times_epoch.csv', training_times_epoch, delimiter=',')
     training_times_batch[epoch] /= num_data
-    np.savetxt(os.path.join(workdir, 'training_times_batch.csv'), training_times_batch, delimiter=',')
+    np.savetxt(Path(workdir) / 'training_times_batch.csv', training_times_batch, delimiter=',')
 
-    np.save(os.path.join(workdir, 'loss'), loss_over_iter)
+    np.save(Path(workdir) / 'loss', loss_over_iter)
 
     # save checkpoint
-    save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint.pth'), state)
+    save_checkpoint(checkpoint_dir / f'checkpoint.pth', state)
 
     # Generate and save samples for every epoch
     if config.training.snapshot_sampling:
@@ -190,17 +192,15 @@ def train(config, workdir):
       if config.data.is_complex:
         sample = root_sum_of_squares(sample, dim=1).unsqueeze(dim=0)
       ema.restore(score_model.parameters())
-      this_sample_dir = os.path.join(sample_dir, "iter_{}".format(epoch))
-      tf.io.gfile.makedirs(this_sample_dir)
+      this_sample_dir = sample_dir / f"iter_{epoch}"
+      this_sample_dir.mkdir(parents=True, exist_ok=True)
       nrow = int(np.sqrt(sample.shape[0]))
       image_grid = make_grid(sample, nrow, padding=2)
-      sample = np.clip(sample.permute(0, 2, 3, 1).cpu().numpy() * 255, 0, 255).astype(np.uint8)
-      with tf.io.gfile.GFile(
-          os.path.join(this_sample_dir, "sample.np"), "wb") as fout:
+      sample = np.clip(sample.permute(0, 2, 3, 1).detach().cpu().numpy() * 255, 0, 255).astype(np.uint8)
+      with open(this_sample_dir / "sample.np", "wb") as fout:
         np.save(fout, sample)
 
-      with tf.io.gfile.GFile(
-          os.path.join(this_sample_dir, "sample.png"), "wb") as fout:
+      with open(this_sample_dir / "sample.png", "wb") as fout:
         save_image(image_grid, fout)
 
 
@@ -214,12 +214,12 @@ def train_regression(config, workdir):
   """
 
   # Create directories for experimental logs
-  sample_dir = os.path.join(workdir, "samples")
-  tf.io.gfile.makedirs(sample_dir)
+  sample_dir = Path(workdir) / "samples"
+  sample_dir.mkdir(parents=True, exist_ok=True)
 
-  tb_dir = os.path.join(workdir, "tensorboard")
-  tf.io.gfile.makedirs(tb_dir)
-  writer = tensorboard.SummaryWriter(tb_dir)
+  tb_dir = Path(workdir) / "tensorboard"
+  tb_dir.mkdir(parents=True, exist_ok=True)
+  writer = tensorboard.SummaryWriter(str(tb_dir))
 
   # Initialize model.
   score_model = mutils.create_model(config)
@@ -228,16 +228,16 @@ def train_regression(config, workdir):
   state = dict(optimizer=optimizer, model=score_model, ema=ema, step=0)
 
   # Create checkpoints directory
-  checkpoint_dir = os.path.join(workdir, "checkpoints")
-  checkpoint_meta_dir = os.path.join(workdir, "checkpoints-meta", "checkpoint.pth")
-  tf.io.gfile.makedirs(checkpoint_dir)
-  tf.io.gfile.makedirs(os.path.dirname(checkpoint_meta_dir))
+  checkpoint_dir = Path(workdir) / "checkpoints"
+  checkpoint_meta_dir = Path(workdir) / "checkpoints-meta" / "checkpoint.pth"
+  checkpoint_dir.mkdir(parents=True, exist_ok=True)
+  checkpoint_meta_dir.parent.mkdir(parents=True, exist_ok=True)
   # Resume training when intermediate checkpoints are detected
   state = restore_checkpoint(checkpoint_meta_dir, state, config.device)
   initial_step = int(state['step'])
 
   # Build pytorch dataloader for training
-  train_dl, eval_dl = datasets.create_dataloader(config)
+  train_dl, eval_dl = mydata.create_dataloader()
   num_data = len(train_dl.dataset)
 
   # Build one-step training and evaluation functions
@@ -269,7 +269,7 @@ def train_regression(config, workdir):
         writer.add_scalar("training_loss", scalar_value=loss, global_step=global_step)
 
     # Save a checkpoint for every epoch
-    save_checkpoint(os.path.join(checkpoint_dir, f'checkpoint_{epoch}.pth'), state)
+    save_checkpoint(checkpoint_dir / f'checkpoint_{epoch}.pth', state)
 
     # Generate and save samples for every epoch
     if config.training.snapshot_sampling:
@@ -279,251 +279,245 @@ def train_regression(config, workdir):
       est = eval_step_fn(state, eval_batch)
       sample = torch.cat((est, eval_batch), dim=0)
       ema.restore(score_model.parameters())
-      this_sample_dir = os.path.join(sample_dir, "iter_{}".format(epoch))
-      tf.io.gfile.makedirs(this_sample_dir)
+      this_sample_dir = sample_dir / f"iter_{epoch}"
+      this_sample_dir.mkdir(parents=True, exist_ok=True)
       nrow = int(np.sqrt(sample.shape[0]))
       image_grid = make_grid(sample, nrow, padding=2)
-      sample = np.clip(sample.permute(0, 2, 3, 1).cpu().numpy() * 255, 0, 255).astype(np.uint8)
-      with tf.io.gfile.GFile(
-          os.path.join(this_sample_dir, "sample.np"), "wb") as fout:
+      sample = np.clip(sample.permute(0, 2, 3, 1).detach().cpu().numpy() * 255, 0, 255).astype(np.uint8)
+      with open(this_sample_dir / "sample.np", "wb") as fout:
         np.save(fout, sample)
 
-      with tf.io.gfile.GFile(
-          os.path.join(this_sample_dir, "sample.png"), "wb") as fout:
+      with open(this_sample_dir / "sample.png", "wb") as fout:
         save_image(image_grid, fout)
 
 
-def evaluate(config,
-             workdir,
-             eval_folder="eval"):
-  """Evaluate trained models.
+# def evaluate(config,
+#              workdir,
+#              eval_folder="eval"):
+#   """Evaluate trained models.
 
-  Args:
-    config: Configuration to use.
-    workdir: Working directory for checkpoints.
-    eval_folder: The subfolder for storing evaluation results. Default to
-      "eval".
-  """
-  # Create directory to eval_folder
-  eval_dir = os.path.join(workdir, eval_folder)
-  tf.io.gfile.makedirs(eval_dir)
+#   Args:
+#     config: Configuration to use.
+#     workdir: Working directory for checkpoints.
+#     eval_folder: The subfolder for storing evaluation results. Default to
+#       "eval".
+#   """
+#   # Create directory to eval_folder
+#   eval_dir = Path(workdir) / eval_folder
+#   eval_dir.mkdir(parents=True, exist_ok=True)
 
-  # Build data pipeline
-  train_ds, eval_ds, _ = datasets.get_dataset(config,
-                                              uniform_dequantization=config.data.uniform_dequantization,
-                                              evaluation=True)
+#   # Build data pipeline
+#   train_ds, eval_ds, _ = datasets.get_dataset(config,
+#                                               uniform_dequantization=config.data.uniform_dequantization,
+#                                               evaluation=True)
 
-  # Create data normalizer and its inverse
-  scaler = datasets.get_data_scaler(config)
-  inverse_scaler = datasets.get_data_inverse_scaler(config)
+#   # Create data normalizer and its inverse
+#   scaler = datasets.get_data_scaler(config)
+#   inverse_scaler = datasets.get_data_inverse_scaler(config)
 
-  # Initialize model
-  score_model = mutils.create_model(config)
-  optimizer = losses.get_optimizer(config, score_model.parameters())
-  ema = ExponentialMovingAverage(score_model.parameters(), decay=config.model.ema_rate)
-  state = dict(optimizer=optimizer, model=score_model, ema=ema, step=0)
+#   # Initialize model
+#   score_model = mutils.create_model(config)
+#   optimizer = losses.get_optimizer(config, score_model.parameters())
+#   ema = ExponentialMovingAverage(score_model.parameters(), decay=config.model.ema_rate)
+#   state = dict(optimizer=optimizer, model=score_model, ema=ema, step=0)
 
-  checkpoint_dir = os.path.join(workdir, "checkpoints")
+#   checkpoint_dir = Path(workdir) / "checkpoints"
 
-  # Setup SDEs
-  if config.training.sde.lower() == 'vpsde':
-    sde = sde_lib.VPSDE(beta_min=config.model.beta_min, beta_max=config.model.beta_max, N=config.model.num_scales)
-    sampling_eps = 1e-3
-  elif config.training.sde.lower() == 'subvpsde':
-    sde = sde_lib.subVPSDE(beta_min=config.model.beta_min, beta_max=config.model.beta_max, N=config.model.num_scales)
-    sampling_eps = 1e-3
-  elif config.training.sde.lower() == 'vesde':
-    sde = sde_lib.VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=config.model.num_scales)
-    sampling_eps = 1e-5
-  else:
-    raise NotImplementedError(f"SDE {config.training.sde} unknown.")
+#   # Setup SDEs
+#   if config.training.sde.lower() == 'vpsde':
+#     sde = sde_lib.VPSDE(beta_min=config.model.beta_min, beta_max=config.model.beta_max, N=config.model.num_scales)
+#     sampling_eps = 1e-3
+#   elif config.training.sde.lower() == 'subvpsde':
+#     sde = sde_lib.subVPSDE(beta_min=config.model.beta_min, beta_max=config.model.beta_max, N=config.model.num_scales)
+#     sampling_eps = 1e-3
+#   elif config.training.sde.lower() == 'vesde':
+#     sde = sde_lib.VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=config.model.num_scales)
+#     sampling_eps = 1e-5
+#   else:
+#     raise NotImplementedError(f"SDE {config.training.sde} unknown.")
 
-  # Create the one-step evaluation function when loss computation is enabled
-  if config.eval.enable_loss:
-    optimize_fn = losses.optimization_manager(config)
-    continuous = config.training.continuous
-    likelihood_weighting = config.training.likelihood_weighting
+#   # Create the one-step evaluation function when loss computation is enabled
+#   if config.eval.enable_loss:
+#     optimize_fn = losses.optimization_manager(config)
+#     continuous = config.training.continuous
+#     likelihood_weighting = config.training.likelihood_weighting
 
-    reduce_mean = config.training.reduce_mean
-    eval_step = losses.get_step_fn(sde, train=False, optimize_fn=optimize_fn,
-                                   reduce_mean=reduce_mean,
-                                   continuous=continuous,
-                                   likelihood_weighting=likelihood_weighting)
+#     reduce_mean = config.training.reduce_mean
+#     eval_step = losses.get_step_fn(sde, train=False, optimize_fn=optimize_fn,
+#                                    reduce_mean=reduce_mean,
+#                                    continuous=continuous,
+#                                    likelihood_weighting=likelihood_weighting)
 
 
-  # Create data loaders for likelihood evaluation. Only evaluate on uniformly dequantized data
-  train_ds_bpd, eval_ds_bpd, _ = datasets.get_dataset(config,
-                                                      uniform_dequantization=True, evaluation=True)
-  if config.eval.bpd_dataset.lower() == 'train':
-    ds_bpd = train_ds_bpd
-    bpd_num_repeats = 1
-  elif config.eval.bpd_dataset.lower() == 'test':
-    # Go over the dataset 5 times when computing likelihood on the test dataset
-    ds_bpd = eval_ds_bpd
-    bpd_num_repeats = 5
-  else:
-    raise ValueError(f"No bpd dataset {config.eval.bpd_dataset} recognized.")
+#   # Create data loaders for likelihood evaluation. Only evaluate on uniformly dequantized data
+#   train_ds_bpd, eval_ds_bpd, _ = datasets.get_dataset(config,
+#                                                       uniform_dequantization=True, evaluation=True)
+#   if config.eval.bpd_dataset.lower() == 'train':
+#     ds_bpd = train_ds_bpd
+#     bpd_num_repeats = 1
+#   elif config.eval.bpd_dataset.lower() == 'test':
+#     # Go over the dataset 5 times when computing likelihood on the test dataset
+#     ds_bpd = eval_ds_bpd
+#     bpd_num_repeats = 5
+#   else:
+#     raise ValueError(f"No bpd dataset {config.eval.bpd_dataset} recognized.")
 
-  # Build the likelihood computation function when likelihood is enabled
-  if config.eval.enable_bpd:
-    likelihood_fn = likelihood.get_likelihood_fn(sde, inverse_scaler)
+#   # Build the likelihood computation function when likelihood is enabled
+#   if config.eval.enable_bpd:
+#     likelihood_fn = likelihood.get_likelihood_fn(sde, inverse_scaler)
 
-  # Build the sampling function when sampling is enabled
-  if config.eval.enable_sampling:
-    sampling_shape = (config.eval.batch_size,
-                      config.data.num_channels,
-                      config.data.image_size, config.data.image_size)
-    sampling_fn = sampling.get_sampling_fn(config, sde, sampling_shape, inverse_scaler, sampling_eps)
+#   # Build the sampling function when sampling is enabled
+#   if config.eval.enable_sampling:
+#     sampling_shape = (config.eval.batch_size,
+#                       config.data.num_channels,
+#                       config.data.image_size, config.data.image_size)
+#     sampling_fn = sampling.get_sampling_fn(config, sde, sampling_shape, inverse_scaler, sampling_eps)
 
-  # Use inceptionV3 for images with resolution higher than 256.
-  inceptionv3 = config.data.image_size >= 256
-  inception_model = evaluation.get_inception_model(inceptionv3=inceptionv3)
+#   # Use inceptionV3 for images with resolution higher than 256.
+#   inceptionv3 = config.data.image_size >= 256
+#   inception_model = evaluation.get_inception_model(inceptionv3=inceptionv3)
 
-  begin_ckpt = config.eval.begin_ckpt
-  logging.info("begin checkpoint: %d" % (begin_ckpt,))
-  for ckpt in range(begin_ckpt, config.eval.end_ckpt + 1):
-    # Wait if the target checkpoint doesn't exist yet
-    waiting_message_printed = False
-    ckpt_filename = os.path.join(checkpoint_dir, "checkpoint_{}.pth".format(ckpt))
-    while not tf.io.gfile.exists(ckpt_filename):
-      if not waiting_message_printed:
-        logging.warning("Waiting for the arrival of checkpoint_%d" % (ckpt,))
-        waiting_message_printed = True
-      time.sleep(60)
+#   begin_ckpt = config.eval.begin_ckpt
+#   logging.info("begin checkpoint: %d" % (begin_ckpt,))
+#   for ckpt in range(begin_ckpt, config.eval.end_ckpt + 1):
+#     # Wait if the target checkpoint doesn't exist yet
+#     waiting_message_printed = False
+#     ckpt_filename = checkpoint_dir / f"checkpoint_{ckpt}.pth"
+#     while not ckpt_filename.exists():
+#       if not waiting_message_printed:
+#         logging.warning("Waiting for the arrival of checkpoint_%d" % (ckpt,))
+#         waiting_message_printed = True
+#       time.sleep(60)
 
-    # Wait for 2 additional mins in case the file exists but is not ready for reading
-    ckpt_path = os.path.join(checkpoint_dir, f'checkpoint_{ckpt}.pth')
-    try:
-      state = restore_checkpoint(ckpt_path, state, device=config.device)
-    except:
-      time.sleep(60)
-      try:
-        state = restore_checkpoint(ckpt_path, state, device=config.device)
-      except:
-        time.sleep(120)
-        state = restore_checkpoint(ckpt_path, state, device=config.device)
-    ema.copy_to(score_model.parameters())
-    # Compute the loss function on the full evaluation dataset if loss computation is enabled
-    if config.eval.enable_loss:
-      all_losses = []
-      eval_iter = iter(eval_ds)  # pytype: disable=wrong-arg-types
-      for i, batch in enumerate(eval_iter):
-        eval_batch = torch.from_numpy(batch['image']._numpy()).to(config.device).float()
-        eval_batch = eval_batch.permute(0, 3, 1, 2)
-        eval_batch = scaler(eval_batch)
-        eval_loss = eval_step(state, eval_batch)
-        all_losses.append(eval_loss.item())
-        if (i + 1) % 1000 == 0:
-          logging.info("Finished %dth step loss evaluation" % (i + 1))
+#     # Wait for 2 additional mins in case the file exists but is not ready for reading
+#     ckpt_path = checkpoint_dir / f'checkpoint_{ckpt}.pth'
+#     try:
+#       state = restore_checkpoint(ckpt_path, state, device=config.device)
+#     except:
+#       time.sleep(60)
+#       try:
+#         state = restore_checkpoint(ckpt_path, state, device=config.device)
+#       except:
+#         time.sleep(120)
+#         state = restore_checkpoint(ckpt_path, state, device=config.device)
+#     ema.copy_to(score_model.parameters())
+#     # Compute the loss function on the full evaluation dataset if loss computation is enabled
+#     if config.eval.enable_loss:
+#       all_losses = []
+#       eval_iter = iter(eval_ds)  # pytype: disable=wrong-arg-types
+#       for i, batch in enumerate(eval_iter):
+#         eval_batch = torch.from_numpy(batch['image']._numpy()).to(config.device).float()
+#         eval_batch = eval_batch.permute(0, 3, 1, 2)
+#         eval_batch = scaler(eval_batch)
+#         eval_loss = eval_step(state, eval_batch)
+#         all_losses.append(eval_loss.item())
+#         if (i + 1) % 1000 == 0:
+#           logging.info("Finished %dth step loss evaluation" % (i + 1))
 
-      # Save loss values to disk or Google Cloud Storage
-      all_losses = np.asarray(all_losses)
-      with tf.io.gfile.GFile(os.path.join(eval_dir, f"ckpt_{ckpt}_loss.npz"), "wb") as fout:
-        io_buffer = io.BytesIO()
-        np.savez_compressed(io_buffer, all_losses=all_losses, mean_loss=all_losses.mean())
-        fout.write(io_buffer.getvalue())
+#       # Save loss values to disk or Google Cloud Storage
+#       all_losses = np.asarray(all_losses)
+#       with open(eval_dir / f"ckpt_{ckpt}_loss.npz", "wb") as fout:
+#         io_buffer = io.BytesIO()
+#         np.savez_compressed(io_buffer, all_losses=all_losses, mean_loss=all_losses.mean())
+#         fout.write(io_buffer.getvalue())
 
-    # Compute log-likelihoods (bits/dim) if enabled
-    if config.eval.enable_bpd:
-      bpds = []
-      for repeat in range(bpd_num_repeats):
-        bpd_iter = iter(ds_bpd)  # pytype: disable=wrong-arg-types
-        for batch_id in range(len(ds_bpd)):
-          batch = next(bpd_iter)
-          eval_batch = torch.from_numpy(batch['image']._numpy()).to(config.device).float()
-          eval_batch = eval_batch.permute(0, 3, 1, 2)
-          eval_batch = scaler(eval_batch)
-          bpd = likelihood_fn(score_model, eval_batch)[0]
-          bpd = bpd.detach().cpu().numpy().reshape(-1)
-          bpds.extend(bpd)
-          logging.info(
-            "ckpt: %d, repeat: %d, batch: %d, mean bpd: %6f" % (ckpt, repeat, batch_id, np.mean(np.asarray(bpds))))
-          bpd_round_id = batch_id + len(ds_bpd) * repeat
-          # Save bits/dim to disk or Google Cloud Storage
-          with tf.io.gfile.GFile(os.path.join(eval_dir,
-                                              f"{config.eval.bpd_dataset}_ckpt_{ckpt}_bpd_{bpd_round_id}.npz"),
-                                 "wb") as fout:
-            io_buffer = io.BytesIO()
-            np.savez_compressed(io_buffer, bpd)
-            fout.write(io_buffer.getvalue())
+#     # Compute log-likelihoods (bits/dim) if enabled
+#     if config.eval.enable_bpd:
+#       bpds = []
+#       for repeat in range(bpd_num_repeats):
+#         bpd_iter = iter(ds_bpd)  # pytype: disable=wrong-arg-types
+#         for batch_id in range(len(ds_bpd)):
+#           batch = next(bpd_iter)
+#           eval_batch = torch.from_numpy(batch['image']._numpy()).to(config.device).float()
+#           eval_batch = eval_batch.permute(0, 3, 1, 2)
+#           eval_batch = scaler(eval_batch)
+#           bpd = likelihood_fn(score_model, eval_batch)[0]
+#           bpd = bpd.detach().cpu().numpy().reshape(-1)
+#           bpds.extend(bpd)
+#           logging.info(
+#             "ckpt: %d, repeat: %d, batch: %d, mean bpd: %6f" % (ckpt, repeat, batch_id, np.mean(np.asarray(bpds))))
+#           bpd_round_id = batch_id + len(ds_bpd) * repeat
+#           # Save bits/dim to disk or Google Cloud Storage
+#           with open(eval_dir / f"{config.eval.bpd_dataset}_ckpt_{ckpt}_bpd_{bpd_round_id}.npz", "wb") as fout:
+#             io_buffer = io.BytesIO()
+#             np.savez_compressed(io_buffer, bpd)
+#             fout.write(io_buffer.getvalue())
 
-    # Generate samples and compute IS/FID/KID when enabled
-    if config.eval.enable_sampling:
-      num_sampling_rounds = config.eval.num_samples // config.eval.batch_size + 1
-      for r in range(num_sampling_rounds):
-        logging.info("sampling -- ckpt: %d, round: %d" % (ckpt, r))
+#     # Generate samples and compute IS/FID/KID when enabled
+#     if config.eval.enable_sampling:
+#       num_sampling_rounds = config.eval.num_samples // config.eval.batch_size + 1
+#       for r in range(num_sampling_rounds):
+#         logging.info("sampling -- ckpt: %d, round: %d" % (ckpt, r))
 
-        # Directory to save samples. Different for each host to avoid writing conflicts
-        this_sample_dir = os.path.join(
-          eval_dir, f"ckpt_{ckpt}")
-        tf.io.gfile.makedirs(this_sample_dir)
-        samples, n = sampling_fn(score_model)
-        samples = np.clip(samples.permute(0, 2, 3, 1).cpu().numpy() * 255., 0, 255).astype(np.uint8)
-        samples = samples.reshape(
-          (-1, config.data.image_size, config.data.image_size, config.data.num_channels))
-        # Write samples to disk or Google Cloud Storage
-        with tf.io.gfile.GFile(
-            os.path.join(this_sample_dir, f"samples_{r}.npz"), "wb") as fout:
-          io_buffer = io.BytesIO()
-          np.savez_compressed(io_buffer, samples=samples)
-          fout.write(io_buffer.getvalue())
+#         # Directory to save samples. Different for each host to avoid writing conflicts
+#         this_sample_dir = eval_dir / f"ckpt_{ckpt}"
+#         this_sample_dir.mkdir(parents=True, exist_ok=True)
+#         samples, n = sampling_fn(score_model)
+#         samples = np.clip(samples.permute(0, 2, 3, 1).cpu().numpy() * 255., 0, 255).astype(np.uint8)
+#         samples = samples.reshape(
+#           (-1, config.data.image_size, config.data.image_size, config.data.num_channels))
+#         # Write samples to disk or Google Cloud Storage
+#         with open(this_sample_dir / f"samples_{r}.npz", "wb") as fout:
+#           io_buffer = io.BytesIO()
+#           np.savez_compressed(io_buffer, samples=samples)
+#           fout.write(io_buffer.getvalue())
 
-        # Force garbage collection before calling TensorFlow code for Inception network
-        gc.collect()
-        latents = evaluation.run_inception_distributed(samples, inception_model,
-                                                       inceptionv3=inceptionv3)
-        # Force garbage collection again before returning to JAX code
-        gc.collect()
-        # Save latent represents of the Inception network to disk or Google Cloud Storage
-        with tf.io.gfile.GFile(
-            os.path.join(this_sample_dir, f"statistics_{r}.npz"), "wb") as fout:
-          io_buffer = io.BytesIO()
-          np.savez_compressed(
-            io_buffer, pool_3=latents["pool_3"], logits=latents["logits"])
-          fout.write(io_buffer.getvalue())
+#         # Force garbage collection before calling TensorFlow code for Inception network
+#         gc.collect()
+#         latents = evaluation.run_inception_distributed(samples, inception_model,
+#                                                        inceptionv3=inceptionv3)
+#         # Force garbage collection again before returning to JAX code
+#         gc.collect()
+#         # Save latent represents of the Inception network to disk or Google Cloud Storage
+#         with open(this_sample_dir / f"statistics_{r}.npz", "wb") as fout:
+#           io_buffer = io.BytesIO()
+#           np.savez_compressed(
+#             io_buffer, pool_3=latents["pool_3"], logits=latents["logits"])
+#           fout.write(io_buffer.getvalue())
 
-      # Compute inception scores, FIDs and KIDs.
-      # Load all statistics that have been previously computed and saved for each host
-      all_logits = []
-      all_pools = []
-      this_sample_dir = os.path.join(eval_dir, f"ckpt_{ckpt}")
-      stats = tf.io.gfile.glob(os.path.join(this_sample_dir, "statistics_*.npz"))
-      for stat_file in stats:
-        with tf.io.gfile.GFile(stat_file, "rb") as fin:
-          stat = np.load(fin)
-          if not inceptionv3:
-            all_logits.append(stat["logits"])
-          all_pools.append(stat["pool_3"])
+#       # Compute inception scores, FIDs and KIDs.
+#       # Load all statistics that have been previously computed and saved for each host
+#       all_logits = []
+#       all_pools = []
+#       this_sample_dir = eval_dir / f"ckpt_{ckpt}"
+#       stats = list(this_sample_dir.glob("statistics_*.npz"))
+#       for stat_file in stats:
+#         with open(stat_file, "rb") as fin:
+#           stat = np.load(fin)
+#           if not inceptionv3:
+#             all_logits.append(stat["logits"])
+#           all_pools.append(stat["pool_3"])
 
-      if not inceptionv3:
-        all_logits = np.concatenate(all_logits, axis=0)[:config.eval.num_samples]
-      all_pools = np.concatenate(all_pools, axis=0)[:config.eval.num_samples]
+#       if not inceptionv3:
+#         all_logits = np.concatenate(all_logits, axis=0)[:config.eval.num_samples]
+#       all_pools = np.concatenate(all_pools, axis=0)[:config.eval.num_samples]
 
-      # Load pre-computed dataset statistics.
-      data_stats = evaluation.load_dataset_stats(config)
-      data_pools = data_stats["pool_3"]
+#       # Load pre-computed dataset statistics.
+#       data_stats = evaluation.load_dataset_stats(config)
+#       data_pools = data_stats["pool_3"]
 
-      # Compute FID/KID/IS on all samples together.
-      if not inceptionv3:
-        inception_score = tfgan.eval.classifier_score_from_logits(all_logits)
-      else:
-        inception_score = -1
+#       # Comment out since it does not work
 
-      fid = tfgan.eval.frechet_classifier_distance_from_activations(
-        data_pools, all_pools)
-      # Hack to get tfgan KID work for eager execution.
-      tf_data_pools = tf.convert_to_tensor(data_pools)
-      tf_all_pools = tf.convert_to_tensor(all_pools)
-      kid = tfgan.eval.kernel_classifier_distance_from_activations(
-        tf_data_pools, tf_all_pools).numpy()
-      del tf_data_pools, tf_all_pools
+#       # Compute FID/KID/IS on all samples together.
+#       # if not inceptionv3:
+#       #   inception_score = tfgan.eval.classifier_score_from_logits(all_logits)
+#       # else:
+#       #   inception_score = -1
 
-      logging.info(
-        "ckpt-%d --- inception_score: %.6e, FID: %.6e, KID: %.6e" % (
-          ckpt, inception_score, fid, kid))
+#       # fid = tfgan.eval.frechet_classifier_distance_from_activations(
+#       #   data_pools, all_pools)
+#       # # Hack to get tfgan KID work for eager execution.
+#       # tf_data_pools = tf.convert_to_tensor(data_pools)
+#       # tf_all_pools = tf.convert_to_tensor(all_pools)
+#       # kid = tfgan.eval.kernel_classifier_distance_from_activations(
+#       #   tf_data_pools, tf_all_pools).numpy()
+#       # del tf_data_pools, tf_all_pools
 
-      with tf.io.gfile.GFile(os.path.join(eval_dir, f"report_{ckpt}.npz"),
-                             "wb") as f:
-        io_buffer = io.BytesIO()
-        np.savez_compressed(io_buffer, IS=inception_score, fid=fid, kid=kid)
-        f.write(io_buffer.getvalue())
+#       # logging.info(
+#       #   "ckpt-%d --- inception_score: %.6e, FID: %.6e, KID: %.6e" % (
+#       #     ckpt, inception_score, fid, kid))
+
+#       # with open(eval_dir / f"report_{ckpt}.npz", "wb") as f:
+#       #   io_buffer = io.BytesIO()
+#       #   np.savez_compressed(io_buffer, IS=inception_score, fid=fid, kid=kid)
+#       #   f.write(io_buffer.getvalue())

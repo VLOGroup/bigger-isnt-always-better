@@ -1,0 +1,41 @@
+model:
+  name: 'ncsnpp'
+  sigma_max: 378
+  sigma_min: 0.01
+  num_scales: 2000
+  beta_min: 0.1
+  beta_max: 20.
+  dropout: 0.
+  embedding_type: 'fourier'
+  scale_by_sigma: True
+  ema_rate: 0.999
+  normalization: 'GroupNorm'
+  nonlinearity: 'swish'
+  nf: 128
+  num_resolutions: 1
+  num_res_blocks: 4
+  attn_resolutions: ()
+  ch_mult: [1]
+  use_attention: False
+  resamp_with_conv: True
+  conditional: True
+  fir: True
+  fir_kernel: [1, 3, 3, 1]
+  skip_rescale: True
+  resblock_type: 'biggan'
+  progressive: 'none'
+  progressive_input: 'residual'
+  progressive_combine: 'sum'
+  init_scale: 0.
+  fourier_scale: 16
+  conv_size: 3
+  data_centered: False
+  flip_data: False
+
+sde:
+  likelihood_weighting: False
+  continuous: True
+  reduce_mean: False
+  sde: 'vesde'
+
+path: '/mount/data/glaszner/workdir/fastmri_knee_1/checkpoints/checkpoint.pth'

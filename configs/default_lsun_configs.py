@@ -8,7 +8,7 @@ def get_default_configs():
   config.training = training = ml_collections.ConfigDict()
   # config.training.batch_size = 64
   # config.training.batch_size = 2  # seriously?
-  config.training.batch_size = 1  # When using single GPU
+  config.training.batch_size = 2  # When using single GPU
   # training.n_iters = 2400001
   training.epochs = 344
   training.snapshot_freq = 50000

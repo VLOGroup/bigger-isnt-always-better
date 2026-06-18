@@ -1,0 +1,47 @@
+model:
+  attn_resolutions: ()
+  beta_max: 20.0
+  beta_min: 0.1
+  ch_mult:
+  - 1
+  - 2
+  - 2
+  - 2
+  conditional: true
+  conv_size: 3
+  data_centered: false
+  dropout: 0.0
+  ema_rate: 0.999
+  embedding_type: fourier
+  fir: true
+  fir_kernel:
+  - 1
+  - 3
+  - 3
+  - 1
+  flip_data: false
+  fourier_scale: 16
+  init_scale: 0.0
+  name: ncsnpp
+  nf: 40
+  nonlinearity: swish
+  normalization: GroupNorm
+  num_res_blocks: 4
+  num_resolutions: 4
+  num_scales: 2000
+  progressive: none
+  progressive_combine: sum
+  progressive_input: residual
+  resamp_with_conv: true
+  resblock_type: biggan
+  scale_by_sigma: true
+  sigma_max: 378
+  sigma_min: 0.01
+  skip_rescale: true
+  use_attention: false
+path: /srv/local/lg/workdir/ct_4_small/checkpoints/checkpoint.pth
+sde:
+  continuous: true
+  likelihood_weighting: false
+  reduce_mean: false
+  sde: vesde

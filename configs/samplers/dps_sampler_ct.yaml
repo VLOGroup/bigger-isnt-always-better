@@ -1,0 +1,7 @@
+method: 'dps'
+num_scales: 500
+n_steps_each: 1
+noise_removal: True
+probability_flow: False
+snr: 0.075
+use_yt: False

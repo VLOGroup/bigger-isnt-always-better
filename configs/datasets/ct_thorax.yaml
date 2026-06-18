@@ -1,0 +1,6 @@
+dataset: 'ct_thorax'
+root: '/mount/data/glaszner/datasets/CT/thorax/'
+image_size: 320
+num_channels: 1
+uniform_dequantization: False
+data_centered: False

@@ -20,6 +20,7 @@ import torch.nn as nn
 import functools
 import torch
 import numpy as np
+from torchvision.transforms.v2.functional import vertical_flip
 
 ResnetBlockDDPM = layerspp.ResnetBlockDDPMpp
 ResnetBlockBigGAN = layerspp.ResnetBlockBigGANpp
@@ -41,39 +42,37 @@ class NCSNpp(nn.Module):
     self.act = act = get_act(config)
     self.register_buffer('sigmas', torch.tensor(utils.get_sigmas(config)))
 
-    self.nf = nf = config.model.nf
-    ch_mult = config.model.ch_mult
-    self.num_res_blocks = num_res_blocks = config.model.num_res_blocks
-    self.attn_resolutions = attn_resolutions = config.model.attn_resolutions
-    self.use_attention = use_attention = config.model.use_attention
-    dropout = config.model.dropout
-    resamp_with_conv = config.model.resamp_with_conv
-    self.num_resolutions = num_resolutions = len(ch_mult)
-    self.all_resolutions = all_resolutions = [config.data.image_size // (2 ** i) for i in range(num_resolutions)]
+    self.nf = nf = config['model']['nf']
+    self.ch_mult = ch_mult = config['model']['ch_mult']
+    self.num_res_blocks = num_res_blocks = config['model']['num_res_blocks']
+    self.use_attention = use_attention = config['model']['use_attention']
+    dropout = config['model']['dropout']
+    resamp_with_conv = config['model']['resamp_with_conv']
+    self.num_resolutions = num_resolutions = config['model']['num_resolutions']
 
-    self.conditional = conditional = config.model.conditional  # noise-conditional
-    fir = config.model.fir
-    fir_kernel = config.model.fir_kernel
-    self.skip_rescale = skip_rescale = config.model.skip_rescale
-    self.resblock_type = resblock_type = config.model.resblock_type.lower()
-    self.progressive = progressive = config.model.progressive.lower()
-    self.progressive_input = progressive_input = config.model.progressive_input.lower()
-    self.embedding_type = embedding_type = config.model.embedding_type.lower()
-    init_scale = config.model.init_scale
+    self.conditional = conditional = config['model']['conditional']  # noise-conditional
+    fir = config['model']['fir']
+    fir_kernel = config['model']['fir_kernel']
+    self.skip_rescale = skip_rescale = config['model']['skip_rescale']
+    self.resblock_type = resblock_type = config['model']['resblock_type'].lower()
+    self.progressive = progressive = config['model']['progressive'].lower()
+    self.progressive_input = progressive_input = config['model']['progressive_input'].lower()
+    self.embedding_type = embedding_type = config['model']['embedding_type'].lower()
+    init_scale = config['model']['init_scale']
     assert progressive in ['none', 'output_skip', 'residual']
     assert progressive_input in ['none', 'input_skip', 'residual']
     assert embedding_type in ['fourier', 'positional']
-    combine_method = config.model.progressive_combine.lower()
+    combine_method = config['model']['progressive_combine'].lower()
     combiner = functools.partial(Combine, method=combine_method)
 
     modules = []
     # timestep/noise_level embedding; only for continuous training
     if embedding_type == 'fourier':
       # Gaussian Fourier features embeddings.
-      assert config.training.continuous, "Fourier features are only used for continuous training."
+      # assert config.training.continuous, "Fourier features are only used for continuous training."
 
       modules.append(layerspp.GaussianFourierProjection(
-        embedding_size=nf, scale=config.model.fourier_scale
+        embedding_size=nf, scale=config['model']['fourier_scale']
       ))
       embed_dim = 2 * nf
 
@@ -136,7 +135,7 @@ class NCSNpp(nn.Module):
 
     # Downsampling block
 
-    channels = config.data.num_channels
+    channels = 1
     if progressive_input != 'none':
       input_pyramid_ch = channels
 
@@ -151,8 +150,6 @@ class NCSNpp(nn.Module):
         modules.append(ResnetBlock(in_ch=in_ch, out_ch=out_ch))
         in_ch = out_ch
 
-        if (all_resolutions[i_level] in attn_resolutions) and use_attention:
-          modules.append(AttnBlock(channels=in_ch))
         hs_c.append(in_ch)
 
       if i_level != num_resolutions - 1:
@@ -186,9 +183,6 @@ class NCSNpp(nn.Module):
         modules.append(ResnetBlock(in_ch=in_ch + hs_c.pop(),
                                    out_ch=out_ch))
         in_ch = out_ch
-
-      if (all_resolutions[i_level] in attn_resolutions) and use_attention:
-        modules.append(AttnBlock(channels=in_ch))
 
       if progressive != 'none':
         if i_level == num_resolutions - 1:
@@ -233,6 +227,8 @@ class NCSNpp(nn.Module):
 
   def forward(self, x, time_cond):
     # timestep/noise_level embedding; only for continuous training
+    if self.config['model']['flip_data']:
+      x = vertical_flip(x) # because model was trained with flipped MRI data
     modules = self.all_modules
     m_idx = 0
     if self.embedding_type == 'fourier':
@@ -258,7 +254,7 @@ class NCSNpp(nn.Module):
     else:
       temb = None
 
-    if not self.config.data.centered:
+    if not self.config['model']['data_centered']:
       # If input data is in [0, 1]
       x = 2 * x - 1.
 
@@ -274,9 +270,6 @@ class NCSNpp(nn.Module):
       for i_block in range(self.num_res_blocks):
         h = modules[m_idx](hs[-1], temb)
         m_idx += 1
-        if (h.shape[-1] in self.attn_resolutions) and self.use_attention:
-          h = modules[m_idx](h)
-          m_idx += 1
 
         hs.append(h)
 
@@ -321,10 +314,6 @@ class NCSNpp(nn.Module):
       for i_block in range(self.num_res_blocks + 1):
         tmp = hs.pop()
         h = modules[m_idx](torch.cat([h, tmp], dim=1), temb)
-        m_idx += 1
-
-      if (h.shape[-1] in self.attn_resolutions) and self.use_attention:
-        h = modules[m_idx](h)
         m_idx += 1
 
       if self.progressive != 'none':
@@ -379,9 +368,11 @@ class NCSNpp(nn.Module):
       m_idx += 1
 
     assert m_idx == len(modules)
-    if self.config.model.scale_by_sigma:
+    if self.config['model']['scale_by_sigma']:
       used_sigmas = used_sigmas.reshape((x.shape[0], *([1] * len(x.shape[1:]))))
-      # debug
-      # print(f'used_sigmas: {used_sigmas.shape}')
       h = h / used_sigmas
-    return h
+
+    if self.config['model']['flip_data']:
+      h = vertical_flip(h) # because model was trained with flipped MRI data
+
+    return h 

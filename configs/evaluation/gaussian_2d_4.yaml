@@ -1,0 +1,11 @@
+measurement:
+  methodology: 'mri'
+  mask: 'gaussian2d'
+  acc_factor: 4
+  img_size: 320
+  batch_size: 1
+  seed: 42
+
+num_samples: 100
+zeta: 0.75
+  

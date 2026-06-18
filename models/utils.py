@@ -54,8 +54,7 @@ def get_sigmas(config):
   Returns:
     sigmas: a jax numpy arrary of noise levels
   """
-  sigmas = np.exp(
-    np.linspace(np.log(config.model.sigma_max), np.log(config.model.sigma_min), config.model.num_scales))
+  sigmas = np.exp(np.linspace(np.log(config['model']['sigma_max']), np.log(config['model']['sigma_min']), config['model']['num_scales']))
 
   return sigmas
 
@@ -64,8 +63,8 @@ def get_ddpm_params(config):
   """Get betas and alphas --- parameters used in the original DDPM paper."""
   num_diffusion_timesteps = 1000
   # parameters need to be adapted if number of time steps differs from 1000
-  beta_start = config.model.beta_min / config.model.num_scales
-  beta_end = config.model.beta_max / config.model.num_scales
+  beta_start = config['model']['beta_min'] / config['model']['num_scales']
+  beta_end = config['model']['beta_max'] / config['model']['num_scales']
   betas = np.linspace(beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64)
 
   alphas = 1. - betas
@@ -87,13 +86,12 @@ def get_ddpm_params(config):
 
 def create_model(config):
   """Create the score model."""
-  model_name = config.model.name
+  model_name = config['model']['name']
   score_model = get_model(model_name)(config)
-  score_model = score_model.to(config.device)
   return score_model
 
 
-def get_model_fn(model, train=False):
+def get_model_fn(model, train=False, depth_param=False):
   """Create a function to give the output of the score-based model.
 
   Args:
@@ -104,28 +102,48 @@ def get_model_fn(model, train=False):
     A model function.
   """
 
-  def model_fn(x, labels):
-    """Compute the output of the score-based model.
+  if depth_param:
+     def model_fn(x, labels, d):
+      """Compute the output of the score-based model.
 
-    Args:
-      x: A mini-batch of input data.
-      labels: A mini-batch of conditioning variables for time steps. Should be interpreted differently
-        for different models.
+      Args:
+        x: A mini-batch of input data.
+        labels: A mini-batch of conditioning variables for time steps. Should be interpreted differently
+          for different models.
 
-    Returns:
-      A tuple of (model output, new mutable states)
-    """
-    if not train:
-      model.eval()
-      return model(x, labels)
-    else:
-      model.train()
-      return model(x, labels)
+      Returns:
+        A tuple of (model output, new mutable states)
+      """
+      if not train:
+        model.eval()
+        return model(x, labels, d)
+      else:
+        model.train()
+        return model(x, labels, d)
+    
+  else:
+    def model_fn(x, labels):
+      """Compute the output of the score-based model.
+
+      Args:
+        x: A mini-batch of input data.
+        labels: A mini-batch of conditioning variables for time steps. Should be interpreted differently
+          for different models.
+
+      Returns:
+        A tuple of (model output, new mutable states)
+      """
+      if not train:
+        model.eval()
+        return model(x, labels)
+      else:
+        model.train()
+        return model(x, labels)
 
   return model_fn
 
 
-def get_score_fn(sde, model, train=False, continuous=False):
+def get_score_fn(sde, model, train=False, continuous=False, depth_param=False):
   """Wraps `score_fn` so that the model output corresponds to a real time-dependent score function.
 
   Args:
@@ -137,18 +155,30 @@ def get_score_fn(sde, model, train=False, continuous=False):
   Returns:
     A score function.
   """
-  model_fn = get_model_fn(model, train=train)
-  def score_fn(x, t):
-    if continuous:
-      labels = sde.marginal_prob(torch.zeros_like(x), t)[1]
-    else:
-      # For VE-trained models, t=0 corresponds to the highest noise level
-      labels = sde.T - t
-      labels *= sde.N - 1
-      labels = torch.round(labels).long()
+  model_fn = get_model_fn(model, train=train, depth_param=depth_param)
+  if depth_param:
+    def score_fn(x, t, d):
+      if continuous:
+        labels = sde.marginal_prob(torch.zeros_like(x), t)[1]
+      else:
+        # For VE-trained models, t=0 corresponds to the highest noise level
+        labels = sde.T - t
+        labels *= sde.N - 1
+        labels = torch.round(labels).long()
 
-    score = model_fn(x, labels)
-    return score
+      score = model_fn(x, labels, d)
+      return score
+  else:
+    def score_fn(x, t):
+      if continuous:
+        labels = sde.marginal_prob(torch.zeros_like(x), t)[1]
+      else:
+        # For VE-trained models, t=0 corresponds to the highest noise level
+        labels = sde.T - t
+        labels *= sde.N - 1
+        labels = torch.round(labels).long()
+      score = model_fn(x, labels)
+      return score
 
   return score_fn
 

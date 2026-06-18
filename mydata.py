@@ -17,6 +17,27 @@ from torchvision.transforms import v2
 from PIL import Image
 import glob
 import ast
+import imageio.v3 as iio
+
+# From Chung & Ye
+def get_data_scaler(config):
+  """Data normalizer. Assume data are always in [0, 1]."""
+  if config['data_centered']:
+    # Rescale to [-1, 1]
+    return lambda x: x * 2. - 1.
+  else:
+    return lambda x: x
+
+
+def get_data_inverse_scaler(config):
+  """Inverse data normalizer."""
+  if config['data_centered']:
+    # Rescale [-1, 1] to [0, 1]
+    return lambda x: (x + 1.) / 2.
+  else:
+    return lambda x: x
+  
+#-------------------
 
 def select_slices(filename, number_of_slices):
     if number_of_slices % 2 == 0:
@@ -40,9 +61,9 @@ class MRIDataset(DataLoader):
         filename = self.data[idx][0]
         slice = self.data[idx][1]
         file = h5py.File(self.root / filename, 'r')
-        data = file['reconstruction_rss'][len(file['reconstruction_rss']) // 2 + slice]
+        data = file['reconstruction_rss'][len(file['reconstruction_rss']) // 2 + slice].squeeze()[::-1, :]
         data = data - np.min(data)
-        return data / np.max(data)
+        return (data / np.max(data))
 
     def __len__(self):
         return len(self.data)
@@ -69,10 +90,10 @@ class MRITestDataset(DataLoader):
         slice = self.data[idx][1]
         file = h5py.File(self.root / filename, 'r')
         if self.PI:
-            data = normalize_complex(center_crop(ifft2_m(th.from_numpy(file['kspace'][len(file['reconstruction_rss']) // 2 + slice])), (320, 320)))
+            data = normalize_complex(center_crop(ifft2_m(th.from_numpy(file['kspace'][len(file['reconstruction_rss']) // 2 + slice])), (320, 320))).squeeze()
         else:
-            data = normalize(th.from_numpy(file['reconstruction_rss'][len(file['reconstruction_rss']) // 2 + slice]))
-        return data
+            data = normalize(th.from_numpy(file['reconstruction_rss'][len(file['reconstruction_rss']) // 2 + slice])).squeeze()
+        return v2.functional.vertical_flip(data)
 
     def __len__(self):
         return len(self.data)
@@ -100,7 +121,7 @@ class MRITestBrainDataset(DataLoader):
             print(th.sum(th.sum(data, axis=0) - center_crop(th.from_numpy(file['reconstruction_rss'][slice]), (320, 320))))
         else:
             data = normalize(center_crop(th.from_numpy(file['reconstruction_rss'][slice]), (320, 320)))
-        return data
+        return v2.functional.vertical_flip(data)
 
     def __len__(self):
         return len(self.data)
@@ -151,10 +172,10 @@ class MRIDataset_infer(DataLoader):
         return len(self.data)
 
 
-def create_dataloader(evaluation=False, sort=True, fat_suppression=False, PI=False):
+def create_dataloader(path, evaluation=False, sort=True, fat_suppression=False, PI=False):
     shuffle = True if not evaluation else False
-    train_dataset = MRIDataset(Path('/srv/local/lg/FAST_MRI') / f'singlecoil_train')
-    val_dataset = MRITestDataset(Path('/srv/local/lg/FAST_MRI') / f'multicoil_val', fat_suppression=fat_suppression, PI=PI)
+    train_dataset = MRIDataset(path / f'singlecoil_train')
+    val_dataset = MRITestDataset(path / f'multicoil_val', fat_suppression=fat_suppression, PI=PI)
 
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -171,8 +192,8 @@ def create_dataloader(evaluation=False, sort=True, fat_suppression=False, PI=Fal
     )
     return train_loader, val_loader
 
-def create_brain_dataloader(PI=False):
-    val_dataset = MRITestBrainDataset(Path('/srv/local/lg/Brain_MRI') / f'multicoil_test_full', PI=PI)
+def create_brain_dataloader(path, PI=False):
+    val_dataset = MRITestBrainDataset(path / f'multicoil_test_full', PI=PI)
     val_loader = DataLoader(
         dataset=val_dataset,
         batch_size=1,
@@ -195,35 +216,35 @@ def create_prostate_dataloader():
 class CelebADataset(DataLoader):
     def __init__(self, root, size):
         self.root = root
-        self.data = [str(i) for i in range(30_000)]
+        self.data = [str(i) for i in range(7_260)]
 
-        if os.path.exists(root + '/resized'):
+        if os.path.exists(root / 'resized'):
             return
 
-        os.mkdir(root + '/resized')
+        os.mkdir(root / 'resized')
         transform = v2.Compose([
             v2.PILToTensor(),
             v2.Grayscale(),
             v2.Resize((320, 320), antialias=True)
             ])
         for filename in self.data:
-            img = Image.open(self.root + '/' + filename + '.jpg')
+            img = Image.open((self.root / filename).with_suffix('.jpg'))
             img = transform(img)
             img = img - th.min(img)
             img = img / th.max(img)
-            np.save(root + '/resized/' + filename, img.numpy())
+            np.save(root / 'resized' / filename, img.detach().numpy())
 
 
     def __getitem__(self, idx):
         filename = self.data[idx]
-        data = np.load(self.root + '/resized/' + filename + '.npy')
+        data = np.load((self.root / 'resized' / filename).with_suffix('.npy'))
         return data 
 
     def __len__(self):
         return len(self.data)
 
-def create_celeba_dataloader(size):
-    train_dataset = CelebADataset('/srv/local/lg/CelebA-HQ-img', size)
+def create_celeba_dataloader(path, size):
+    train_dataset = CelebADataset(path, size)
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=1,
@@ -236,32 +257,31 @@ def create_celeba_dataloader(size):
 class CTDataset(DataLoader):
     def __init__(self, root, size):
         self.root = root
-        self.filenames = glob.glob(root + '*.hdf5')
+        self.filenames = [p.stem for p in sorted(root.glob('*.hdf5'))]
         self.data = []
-
-        if not os.path.exists(root + '/resized'):
-            os.mkdir(root + '/resized')
+        if not os.path.exists(root / 'resized'):
+            os.mkdir(root / 'resized')
             transform = v2.Compose([
                 v2.RandomRotation([-90, -90]),
                 v2.Resize((320, 320), antialias=True)
                 ])
             for filename in self.filenames:
-                img = transform(th.unsqueeze(th.from_numpy(h5py.File(filename, 'r')['data'][:, :, :]), 1))
+                img = transform(th.unsqueeze(th.from_numpy(h5py.File((root / filename).with_suffix('.hdf5'), 'r')['data'][::2, :, :]), 1))
                 img = img - th.min(img)
                 img = img / th.max(img)
-                np.save(root + '/resized/' + filename[-27:-5], img.numpy())
+                np.save(root / 'resized' / filename, img.detach().numpy())
 
-        for filename in self.filenames[:-30]:
-            self.data.extend(select_slices(filename, 120))
+        for filename in self.filenames[:242]:
+            self.data.extend(select_slices(filename, 30))
 
 
     def __getitem__(self, idx):
         filename = self.data[idx][0]
         slice = self.data[idx][1]
-        data = np.load(self.root + '/resized/' + filename[-27:-5] + '.npy')
-        print(slice)
-        print(data.shape[0] // 2 + slice)
-        return data[data.shape[0] // 2 + slice]
+        data = np.load((self.root / 'resized' / filename).with_suffix('.npy'))
+        data = data[data.shape[0] // 2 + slice]
+        data = data - np.min(data)
+        return (data / np.max(data))
 
     def __len__(self):
         return len(self.data)
@@ -269,24 +289,24 @@ class CTDataset(DataLoader):
 class CTTestDataset(DataLoader):
     def __init__(self, root, size):
         self.root = root
-        self.filenames = glob.glob(root + '*.hdf5')
+        self.filenames = [p.stem for p in sorted(root.glob('*.hdf5'))]
         self.data = []
 
-        if not os.path.exists(root + '/resized'):
-            os.mkdir(root + '/resized')
+        if not os.path.exists(root / 'resized'):
+            os.mkdir(root / 'resized')
             transform = v2.Compose([
                 v2.RandomRotation([-90, -90]),
                 v2.Resize((320, 320), antialias=True)
                 ])
             for filename in self.filenames:
-                img = transform(th.unsqueeze(th.from_numpy(h5py.File(filename, 'r')['data'][:, :, :]), 1))
+                img = transform(th.unsqueeze(th.from_numpy(h5py.File((root / filename).with_suffix('.hdf5'), 'r')['data'][::2, :, :]), 1))
                 img = img - th.min(img)
                 img = img / th.max(img)
-                np.save(root + '/resized/' + filename[-27:-5], img.numpy())
+                np.save(root / 'resized' / filename, img.detach().numpy())
 
         for filename in self.filenames:
-            self.data.extend(select_slices(filename, 50))
-        
+            self.data.extend(select_slices(filename, 20))
+
         trial = open(f'./split/ct/test.txt', 'r').read()
         trial = ast.literal_eval(trial)
         self.data = trial
@@ -294,22 +314,22 @@ class CTTestDataset(DataLoader):
     def __getitem__(self, idx):
         filename = self.data[idx][0]
         slice = self.data[idx][1]
-        data = np.load(self.root + '/resized/' + filename[-27:-5] + '.npy')
+        data = np.load((self.root / 'resized' / filename).with_suffix('.npy'))
         # open(f'./split/ct/test.txt', 'a').write(f'{str(self.data[idx])}, ')
         return data[data.shape[0] // 2 + slice]
 
     def __len__(self):
         return len(self.data)
 
-def create_ct_dataloader(size, batch_size=1):
-    train_dataset = CTDataset('/srv/local/lg/ct_2d/', size)
+def create_ct_dataloader(path, size, batch_size=1):
+    train_dataset = CTDataset(path / 'train', size)
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=batch_size,
         shuffle=True,
         drop_last=True
     )
-    test_dataset = CTTestDataset('/srv/local/lg/ct_2d_test/', size)
+    test_dataset = CTTestDataset(path / 'test', size)
     test_loader = DataLoader(
         dataset=test_dataset,
         batch_size=1,
@@ -322,9 +342,9 @@ class CTHeadDataset(DataLoader):
     def __init__(self, root, size):
         self.root = root
 
-        if not os.path.exists(root + 'resized'):
-            self.filenames = glob.glob(root + '*.png')
-            os.mkdir(root + 'resized')
+        if not os.path.exists(root / 'resized'):
+            self.filenames = [p.stem for p in sorted(root.glob('*.png'))]
+            os.mkdir(root / 'resized')
             transform = v2.Compose([
                 v2.Resize((320, 320), antialias=True)
                 ])
@@ -333,25 +353,25 @@ class CTHeadDataset(DataLoader):
 
                 img = img - th.min(img)
                 img = img / th.max(img)
-                np.save(root + f'resized/img_{i}', img.numpy())
-                plt.imsave(root + f'resized/img_{i}.png', img.squeeze().numpy(), cmap='gray')
+                np.save(root / f'resized/img_{i}', img.detach().numpy())
+                plt.imsave(root / f'resized/img_{i}.png', img.detach().squeeze().numpy(), cmap='gray')
 
         trial = open(f'./split/ct_head/test.txt', 'r').read()
         trial = ast.literal_eval(trial)
         self.filenames = trial
-        
+
         self.data = self.filenames
 
     def __getitem__(self, idx):
         filename = self.data[idx]
-        data = np.load(filename)
+        data = np.load((self.root / 'resized' / filename).with_suffix('.npy'))
         return data
 
     def __len__(self):
         return len(self.data)
 
-def create_ct_head_dataloader(size, batch_size=1):
-    test_dataset = CTHeadDataset('/srv/local/lg/ct_brain/rsna-intracranial-hemorrhage-detection/png/', size)
+def create_ct_head_dataloader(path, size, batch_size=1):
+    test_dataset = CTHeadDataset(path, size)
     test_loader = DataLoader(
         dataset=test_dataset,
         batch_size=1,

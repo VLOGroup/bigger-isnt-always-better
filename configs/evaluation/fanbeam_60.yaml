@@ -1,0 +1,9 @@
+measurement:
+  methodology: 'ct'
+  mask: 'fanbeam'
+  num_views: 60
+  img_size: 320
+  batch_size: 1
+
+num_samples: 100
+zeta: 1

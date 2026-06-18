@@ -1,0 +1,3 @@
+methodology: 'ct'
+mask: 'sparse_view'
+num_angles: 30

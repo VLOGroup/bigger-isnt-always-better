@@ -11,6 +11,7 @@ from skimage.morphology import skeletonize
 from skimage.transform import rotate
 from typing import Union, Tuple, Callable
 import fastmri.models as fm
+import imageio.v3 as iio
 
 """
 Helper functions for new types of inverse problems
@@ -216,12 +217,21 @@ def get_radial_mask(
 
     return torch.from_numpy(idx).cuda().float()[None, None]
 
+def get_inner_mask(cutout):
+   mask = np.zeros((320, 320))
+   min = 160 - cutout//2
+   max = min + cutout
+   mask[min:max, min:max] = 1
+   return torch.from_numpy(mask.reshape((1, 1, 320, 320))).cuda().float()
+
 def get_outer_mask(cutout):
     mask = np.ones((320, 320))
 
     x = np.repeat(np.arange(-(cutout // 2), (cutout // 2)), cutout + 1)
     y = np.tile(np.arange(-(cutout // 2), (cutout // 2)), cutout + 1)
     mask[160 + x, 160 + y] = 0
+    # preserve DC part
+    mask[158:162, 158:162] = 1
     return torch.from_numpy(mask.reshape((1, 1, 320, 320))).cuda().float()
 
 def kspace_to_nchw(tensor):
@@ -467,10 +477,11 @@ def apgd(
     callback: Callable[[torch.Tensor, int], None] = lambda x, i: None,
     max_iter: int = 200,
     gamma: float = 1.,
+    L_init: float = 1.,
 ):
     x = x_init.clone()
     x_old = x.clone()
-    L = 1 * torch.ones((x.shape[0], 1, 1, 1), dtype=torch.float32, device=x.device)
+    L = L_init * torch.ones((x.shape[0], 1, 1, 1), dtype=torch.float32, device=x.device)
     for i in range(max_iter):
         beta = i / (i + 3) * 1
         x_bar = x + beta * (x - x_old)
@@ -542,3 +553,14 @@ def batchfy(tensor, batch_size):
   n = len(tensor)
   num_batches = n // batch_size + 1
   return tensor.chunk(num_batches, dim=0)
+
+
+def load_png(path):
+    img = iio.imread(path)
+    img = torch.tensor(img).float() / 255
+    return img
+
+def save_png(img, path, vmin=0., vmax=1.):
+    img = img.clamp(vmin, vmax)
+    img = (img * 255).detach().numpy().astype(np.uint8)
+    iio.imwrite(path, img)

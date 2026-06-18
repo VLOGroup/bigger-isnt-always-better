@@ -1,0 +1,11 @@
+measurement:
+  methodology: 'mri'
+  mask: 'radial'
+  num_spokes: 29
+  batch_size: 1
+  img_size: 320
+  seed: 42
+
+num_samples: 100
+zeta: 0.75
+  
